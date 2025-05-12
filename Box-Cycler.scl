@@ -10,62 +10,121 @@ VAR_INPUT
     bags_per_box : INT;                                  // Number of bags per box
 END_VAR
 
+VAR_IN_OUT
+    ServoAxis : AXIS_REF;                                // Servo axis technology object
+END_VAR
+
 VAR
-    step : INT : 0;                                      // Current step in the process
+    step : INT := 0;                                     // Current step in the process
     bag_count : INT := 0;                                // Counter for bags
+
+    // Intermediate variables for MC commands
+    mc_power : MC_Power;                                 // Instance of MC_Power block
+    mc_move_absolute : MC_MoveAbsolute;                  // Instance of MC_MoveAbsolute block
+    mc_home : MC_Home;                                   // Instance of MC_Home block
+    mc_busy : BOOL;                                      // Indicates if the servo is busy
+    mc_done : BOOL;                                      // Indicates if the servo operation is done
+    mc_error : BOOL;                                     // Indicates if there is an error in the servo
+    mc_command_error : BOOL;                             // Indicates if there is a command error
 END_VAR
 
 VAR_OUTPUT
     servo_command : BOOL;                                // Command to the servo motor
     servo_position : LREAL;                              // Commanded position of the servo motor
-    call_for_box : BOOL : FALSE;                         // Command to call for a box
-    call_for_bag : BOOL : FALSE;                         // Command to call for a bag
-    extend_paddle : BOOL : FALSE;                        // Command to extend the box paddle
+    call_for_box : BOOL := FALSE;                        // Command to call for a box
+    call_for_bag : BOOL := FALSE;                        // Command to call for a bag
+    extend_paddle : BOOL := FALSE;                       // Command to extend the box paddle
     alt_paddle_signal : BOOL;                            // Signal for the alternative paddle
 END_VAR
 
-//Inital state
+// Initial state
 IF NOT initialization_complete THEN
     step := 0;                                           // Stay in the initialization step
-    servo_command := FALSE;                              // Ensure servo command is off
+    mc_power.Execute := FALSE;                           // Ensure servo power is off
     call_for_box := FALSE;                               // Ensure box call is off
     call_for_bag := FALSE;                               // Ensure bag call is off
     extend_paddle := FALSE;                              // Ensure paddle is retracted
     RETURN;                                              // Exit the function
 END_IF
 
-
-// Wait for initialization to complete
+// Power on the servo
 IF step = 0 THEN
-    IF initialization_complete THEN
+    mc_power.Axis := ServoAxis;                          // Assign the servo axis
+    mc_power.Execute := TRUE;                            // Power on the servo
+    mc_error := mc_power.Error;                          // Update servo error status
+
+    IF mc_power.Status THEN
         step := 1;                                       // Move to the next step
     END_IF
 END_IF
 
-// Box request
+// Home the servo
 IF step = 1 THEN
-    servo_position := recipe_positions[0];               // Set the servo position to the box picking position
-    servo_command := TRUE;                               // Command the servo to move
-    IF servo_reached_position THEN
-        servo_command := FALSE;                          // Stop the servo command
+    mc_home.Axis := ServoAxis;                           // Assign the servo axis
+    mc_home.Execute := TRUE;                             // Command the servo to home
+    mc_busy := mc_home.Busy;                             // Update busy status
+    mc_done := mc_home.Done;                             // Update done status
+    mc_command_error := mc_home.Error;                   // Update command error status
+
+    IF mc_done THEN
+        mc_home.Execute := FALSE;                        // Stop the home command
+        step := 2;                                       // Move to the next step
+    END_IF
+
+    IF mc_command_error THEN
+        mc_home.Execute := FALSE;                        // Stop the home command
+        step := 0;                                       // Go back to the initial step
+        mc_power.Execute := FALSE;                       // Power off the servo
+        call_for_box := FALSE;                           // Ensure box call is off
+        call_for_bag := FALSE;                           // Ensure bag call is off
+        extend_paddle := FALSE;                          // Ensure paddle is retracted
+        RETURN;                                          // Exit the function
+    END_IF
+END_IF
+
+
+// Box request
+IF step = 2 THEN
+    mc_move_absolute.Axis := ServoAxis;                  // Assign the servo axis
+    mc_move_absolute.Position := recipe_positions[0];    // Set the target position
+    mc_move_absolute.Velocity := 100.0;                  // Set the velocity
+    mc_move_absolute.Acceleration := 50.0;               // Set the acceleration
+    mc_move_absolute.Deceleration := 50.0;               // Set the deceleration
+    mc_move_absolute.Execute := TRUE;                    // Command the servo to move
+
+    mc_busy := mc_move_absolute.Busy;                    // Update busy status
+    mc_done := mc_move_absolute.Done;                    // Update done status
+    mc_command_error := mc_move_absolute.Error;          // Update command error status
+
+    IF mc_done THEN
+        mc_move_absolute.Execute := FALSE;               // Stop the move command
         IF priority OR alt_paddle_ready THEN
             extend_paddle := TRUE;                       // Extend the paddle to pick up the box
-            call_for_box := TRUE;                            // Call for a box
+            call_for_box := TRUE;                        // Call for a box
         END_IF
         IF box_sensor THEN
             call_for_box := FALSE;                       // Stop calling for a box
             bag_count := 0;                              // Reset bag count if a box is detected
-            step := 2;                                   // Move to the next step
+            step := 3;                                   // Move to the next step
         END_IF
     END_IF
 END_IF
 
 // Bag processing
-IF step = 2 THEN 
-    servo_position := recipe_positions[bag_count + 1];   // Set the servo position to the first bag position
-    servo_command := TRUE;                               // Command the servo to move
-    IF servo_reached_position THEN
-        servo_command := FALSE;                          // Stop the servo command
+IF step = 3 THEN
+    mc_move_absolute.Axis := ServoAxis;                  // Assign the servo axis
+    mc_move_absolute.Position := recipe_positions[bag_count + 1]; // Set the target position
+    mc_move_absolute.Velocity := 100.0;                  // Set the velocity
+    mc_move_absolute.Acceleration := 50.0;               // Set the acceleration
+    mc_move_absolute.Deceleration := 50.0;               // Set the deceleration
+    mc_move_absolute.Execute := TRUE;                    // Command the servo to move
+
+    mc_busy := mc_move_absolute.Busy;                    // Update busy status
+    mc_done := mc_move_absolute.Done;                    // Update done status
+    mc_command_error := mc_move_absolute.Error;          // Update command error status
+
+    IF mc_done THEN
+        mc_move_absolute.Execute := FALSE;               // Stop the move command
         call_for_bag := TRUE;                            // Call for a bag
     ELSE
         call_for_bag := FALSE;                           // Stop calling for a bag
@@ -75,21 +134,30 @@ IF step = 2 THEN
     END_IF
     IF bag_count >= bags_per_box THEN
         bag_count := 0;                                  // Reset bag count
-        step := 3;                                       // Move to the next step
+        step := 4;                                       // Move to the next step
     END_IF
 END_IF
 
 // Box delivery
-IF step = 3 THEN
-    servo_position := recipe_positions[15];              // Set the servo position to the box delivery position
-    servo_command := TRUE;                               // Command the servo to move
-    IF servo_reached_position THEN
-        servo_command := FALSE;                          // Stop the servo command
+IF step = 4 THEN
+    mc_move_absolute.Axis := ServoAxis;                  // Assign the servo axis
+    mc_move_absolute.Position := recipe_positions[15];   // Set the target position
+    mc_move_absolute.Velocity := 100.0;                  // Set the velocity
+    mc_move_absolute.Acceleration := 50.0;               // Set the acceleration
+    mc_move_absolute.Deceleration := 50.0;               // Set the deceleration
+    mc_move_absolute.Execute := TRUE;                    // Command the servo to move
+
+    mc_busy := mc_move_absolute.Busy;                    // Update busy status
+    mc_done := mc_move_absolute.Done;                    // Update done status
+    mc_command_error := mc_move_absolute.Error;          // Update command error status
+
+    IF mc_done THEN
+        mc_move_absolute.Execute := FALSE;               // Stop the move command
         IF outlet_running THEN
             extend_paddle := FALSE;                      // Retract the paddle if the outlet is running
-            step := 1;                                   // Go back to box request
+            step := 2;                                   // Go back to box request
         END_IF
     END_IF
 END_IF
 
-    
+
