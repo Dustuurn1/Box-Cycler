@@ -39,11 +39,11 @@ END_VAR
 
 // Initial state
 IF NOT initialization_complete THEN
-    step := 0;                                           // Stay in the initialization step
     mc_power.Execute := FALSE;                           // Ensure servo power is off
     call_for_box := FALSE;                               // Ensure box call is off
     call_for_bag := FALSE;                               // Ensure bag call is off
     extend_paddle := FALSE;                              // Ensure paddle is retracted
+    step := 0;                                           // Stay in the initialization step
     RETURN;                                              // Exit the function
 END_IF
 
@@ -73,11 +73,11 @@ IF step = 1 THEN
 
     IF mc_command_error THEN
         mc_home.Execute := FALSE;                        // Stop the home command
-        step := 0;                                       // Go back to the initial step
         mc_power.Execute := FALSE;                       // Power off the servo
         call_for_box := FALSE;                           // Ensure box call is off
         call_for_bag := FALSE;                           // Ensure bag call is off
         extend_paddle := FALSE;                          // Ensure paddle is retracted
+        step := 0;                                       // Go back to the initial step
         RETURN;                                          // Exit the function
     END_IF
 END_IF
@@ -161,3 +161,9 @@ IF step = 4 THEN
 END_IF
 
 
+// Dropped box handling
+IF step >2 AND NOT box_sensor THEN
+    extend_paddle := FALSE;                             // Retract the paddle
+    bag_count := 0;                                     // Reset bag count
+    step := 2;                                          // Go back to box request
+END_IF
