@@ -1,0 +1,95 @@
+VAR_INPUT
+    priority : BOOL;                                     // Indicates priority status
+    alt_paddle_ready : BOOL;                             // Indicates if the alternative paddle is ready
+    box_sensor : BOOL;                                   // Detects the presence of a box
+    bag_sensor : BOOL;                                   // Detects the presence of a bag
+    outlet_running : BOOL;                               // Indicates if the outlet is running
+    initialization_complete : BOOL;                      // Indicates if initialization is complete
+    recipe_positions : ARRAY[0..15] OF LREAL;            // Array of recipe positions
+    servo_reached_position : BOOL;                       // Indicates if the servo has reached the commanded position
+    bags_per_box : INT;                                  // Number of bags per box
+END_VAR
+
+VAR
+    step : INT : 0;                                      // Current step in the process
+    bag_count : INT := 0;                                // Counter for bags
+END_VAR
+
+VAR_OUTPUT
+    servo_command : BOOL;                                // Command to the servo motor
+    servo_position : LREAL;                              // Commanded position of the servo motor
+    call_for_box : BOOL : FALSE;                         // Command to call for a box
+    call_for_bag : BOOL : FALSE;                         // Command to call for a bag
+    extend_paddle : BOOL : FALSE;                        // Command to extend the box paddle
+    alt_paddle_signal : BOOL;                            // Signal for the alternative paddle
+END_VAR
+
+//Inital state
+IF NOT initialization_complete THEN
+    step := 0;                                           // Stay in the initialization step
+    servo_command := FALSE;                              // Ensure servo command is off
+    call_for_box := FALSE;                               // Ensure box call is off
+    call_for_bag := FALSE;                               // Ensure bag call is off
+    extend_paddle := FALSE;                              // Ensure paddle is retracted
+    RETURN;                                              // Exit the function
+END_IF
+
+
+// Wait for initialization to complete
+IF step = 0 THEN
+    IF initialization_complete THEN
+        step := 1;                                       // Move to the next step
+    END_IF
+END_IF
+
+// Box request
+IF step = 1 THEN
+    servo_position := recipe_positions[0];               // Set the servo position to the box picking position
+    servo_command := TRUE;                               // Command the servo to move
+    IF servo_reached_position THEN
+        servo_command := FALSE;                          // Stop the servo command
+        IF priority OR alt_paddle_ready THEN
+            extend_paddle := TRUE;                       // Extend the paddle to pick up the box
+            call_for_box := TRUE;                            // Call for a box
+        END_IF
+        IF box_sensor THEN
+            call_for_box := FALSE;                       // Stop calling for a box
+            bag_count := 0;                              // Reset bag count if a box is detected
+            step := 2;                                   // Move to the next step
+        END_IF
+    END_IF
+END_IF
+
+// Bag processing
+IF step = 2 THEN 
+    servo_position := recipe_positions[bag_count + 1];   // Set the servo position to the first bag position
+    servo_command := TRUE;                               // Command the servo to move
+    IF servo_reached_position THEN
+        servo_command := FALSE;                          // Stop the servo command
+        call_for_bag := TRUE;                            // Call for a bag
+    ELSE
+        call_for_bag := FALSE;                           // Stop calling for a bag
+    END_IF
+    IF bag_sensor THEN
+        bag_count := bag_count + 1;                      // Increment the bag count
+    END_IF
+    IF bag_count >= bags_per_box THEN
+        bag_count := 0;                                  // Reset bag count
+        step := 3;                                       // Move to the next step
+    END_IF
+END_IF
+
+// Box delivery
+IF step = 3 THEN
+    servo_position := recipe_positions[15];              // Set the servo position to the box delivery position
+    servo_command := TRUE;                               // Command the servo to move
+    IF servo_reached_position THEN
+        servo_command := FALSE;                          // Stop the servo command
+        IF outlet_running THEN
+            extend_paddle := FALSE;                      // Retract the paddle if the outlet is running
+            step := 1;                                   // Go back to box request
+        END_IF
+    END_IF
+END_IF
+
+    
